@@ -1,0 +1,38 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+database/.env
+
+# Docker volumes
+vecdata/
+
+# Logs
+*.log
+
+# Electron build output
+frontend/out/
+frontend/release/
+
+# Deobfuscated binaries (keep only .cs source)
+docs/deobfuscated/*.dll
+docs/deobfuscated/*.exe

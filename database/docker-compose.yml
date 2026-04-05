@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: quantec_vector_db
+    environment:
+      POSTGRES_DB: quantec_vector
+      POSTGRES_USER: quantec
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quantec_vec_2026}
+    ports:
+      - "5434:5432"
+    volumes:
+      - vecdata:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+    shm_size: 512mb
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=128MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "max_wal_size=2GB"
+      - "-c"
+      - "effective_cache_size=1GB"
+
+volumes:
+  vecdata:
