@@ -30,7 +30,8 @@ type SubView =
   | { type: 'client-detail'; client: Client | null }
   | { type: 'target-detail'; target: Target | null; clientId: number }
   | { type: 'sheet-editor'; targetId: number; clientId: number }
-  | { type: 'morphic-picker'; sheetId: number; targetId: number; clientId: number };
+  | { type: 'morphic-picker'; sheetId: number; targetId: number; clientId: number }
+  | { type: 'scan'; sheetId: number; targetId: number; clientId: number };
 
 export default function App() {
   const [activeSection, setActiveSection] = useState<NavSection>('clients');
@@ -53,6 +54,8 @@ export default function App() {
         return 'Healing Sheets';
       case 'morphic-picker':
         return 'Item auswaehlen';
+      case 'scan':
+        return 'Hardware-Scan';
       default:
         return SECTION_TITLES[activeSection];
     }
@@ -118,6 +121,14 @@ export default function App() {
                 clientId: subView.clientId,
               })
             }
+            onStartScan={(sheetId) =>
+              setSubView({
+                type: 'scan',
+                sheetId,
+                targetId: subView.targetId,
+                clientId: subView.clientId,
+              })
+            }
           />
         );
       }
@@ -132,6 +143,13 @@ export default function App() {
                 clientId: subView.clientId,
               });
             }}
+          />
+        );
+
+      case 'scan':
+        return (
+          <ScanView
+            healingSheetId={subView.sheetId}
           />
         );
 

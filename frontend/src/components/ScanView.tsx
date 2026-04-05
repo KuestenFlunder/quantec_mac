@@ -1,58 +1,134 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import type { MorphicCategoryInfo, MorphicTheme, ScanResultItem, BackgroundTask } from '../types';
+import { useEffect, useState, useCallback } from 'react';
+import type { MorphicCategoryInfo, MorphicTheme } from '../types';
 import {
   fetchMorphicThemes,
   fetchMorphicCategories,
-  startScan,
-  getTaskStatus,
-  getScanResults,
+  getHardwareStatus,
+  connectHardware,
+  runFullScan,
+  runItemScan,
   acceptScanResults,
-  cancelTask,
 } from '../api/client';
 
-type ScanStep = 'categories' | 'params' | 'scanning' | 'results' | 'accepted';
+type ScanMode = 'full' | 'manual';
 
-const DIODE_TYPES = [
+type ScanStep =
+  | 'mode-select'
+  | 'full-config'
+  | 'manual-categories'
+  | 'manual-params'
+  | 'scanning'
+  | 'results'
+  | 'accepted';
+
+interface FullScanStage1Item {
+  category_id: number;
+  category_name: string;
+  theme_name: string | null;
+  item_count: number;
+  score: number;
+}
+
+interface ScanResultItem {
+  item_id: number;
+  category_id: number;
+  category_name: string;
+  text_primary: string | null;
+  text_secondary: string | null;
+  score: number;
+}
+
+/** Backend error response shape when scan/hardware calls fail. */
+interface HardwareErrorResponse {
+  error: string;
+}
+
+const DIODE_METHODS = [
   { value: 'selection', label: 'Selection (Standard)' },
   { value: 'quantec6', label: 'Quantec 6' },
-  { value: 'quantec6_with_random', label: 'Quantec 6 + Random' },
+  { value: 'quantec6random', label: 'Quantec 6 + Random' },
   { value: 'distribution', label: 'Distribution' },
   { value: 'remainder', label: 'Remainder' },
 ];
-
-const STEP_LABELS = ['Kategorien', 'Parameter', 'Scan', 'Ergebnisse', 'Fertig'];
 
 interface ScanViewProps {
   healingSheetId?: number;
 }
 
 export default function ScanView({ healingSheetId }: ScanViewProps) {
-  const [step, setStep] = useState<ScanStep>('categories');
+  // -- Hardware status --
+  const [hwConnected, setHwConnected] = useState(false);
+  const [hwSignalQuality, setHwSignalQuality] = useState(0);
+  const [hwChecking, setHwChecking] = useState(true);
+
+  // -- Shared state --
+  const [step, setStep] = useState<ScanStep>('mode-select');
+  const [mode, setMode] = useState<ScanMode>('full');
+  const [error, setError] = useState<string | null>(null);
+  const [scanPhaseLabel, setScanPhaseLabel] = useState('');
+
+  // -- Theme & category data --
   const [themes, setThemes] = useState<MorphicTheme[]>([]);
   const [categories, setCategories] = useState<MorphicCategoryInfo[]>([]);
-  const [selectedCatIds, setSelectedCatIds] = useState<Set<number>>(new Set());
-  const [cycles, setCycles] = useState(88);
-  const [diodeType, setDiodeType] = useState('selection');
-  const [topN, setTopN] = useState(21);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [taskStatus, setTaskStatus] = useState<string>('');
-  const [results, setResults] = useState<ScanResultItem[]>([]);
-  const [selectedResultIds, setSelectedResultIds] = useState<Set<number>>(new Set());
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [acceptedCount, setAcceptedCount] = useState(0);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [loadingData, setLoadingData] = useState(true);
 
+  // -- Full scan config --
+  const [selectedThemeId, setSelectedThemeId] = useState<number | undefined>(undefined);
+  const [categoryCycles, setCategoryCycles] = useState(88);
+  const [itemCycles, setItemCycles] = useState(88);
+  const [topCategories, setTopCategories] = useState(5);
+  const [topItems, setTopItems] = useState(21);
+  const [method, setMethod] = useState('selection');
+
+  // -- Manual scan config --
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<number>>(new Set());
+  const [manualCycles, setManualCycles] = useState(88);
+  const [manualTopN, setManualTopN] = useState(21);
+  const [manualMethod, setManualMethod] = useState('selection');
+
+  // -- Results --
+  const [stage1Results, setStage1Results] = useState<FullScanStage1Item[]>([]);
+  const [itemResults, setItemResults] = useState<ScanResultItem[]>([]);
+  const [selectedResultIds, setSelectedResultIds] = useState<Set<number>>(new Set());
+  const [resultSignalQuality, setResultSignalQuality] = useState(0);
+  const [acceptedCount, setAcceptedCount] = useState(0);
+
+  // -- Init: load hardware status + category data --
   useEffect(() => {
-    loadCategories();
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
+    checkHardwareStatus();
+    loadCategoryData();
   }, []);
 
-  async function loadCategories() {
-    setLoading(true);
+  const checkHardwareStatus = useCallback(async () => {
+    setHwChecking(true);
+    try {
+      const status = await getHardwareStatus();
+      setHwConnected(status.connected);
+      setHwSignalQuality(status.signal_quality);
+    } catch {
+      setHwConnected(false);
+      setHwSignalQuality(0);
+    } finally {
+      setHwChecking(false);
+    }
+  }, []);
+
+  async function handleConnectHardware() {
+    setError(null);
+    try {
+      const result = await connectHardware();
+      setHwConnected(result.connected);
+      if (!result.connected) {
+        setError('Diode konnte nicht verbunden werden: ' + result.message);
+      }
+      await checkHardwareStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verbindung fehlgeschlagen.');
+    }
+  }
+
+  async function loadCategoryData() {
+    setLoadingData(true);
     try {
       const [themeData, catData] = await Promise.all([
         fetchMorphicThemes(),
@@ -63,10 +139,11 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
     } catch {
       setError('Kategorien konnten nicht geladen werden.');
     } finally {
-      setLoading(false);
+      setLoadingData(false);
     }
   }
 
+  // -- Category toggle (manual mode) --
   function toggleCategory(catId: number) {
     setSelectedCatIds((prev) => {
       const next = new Set(prev);
@@ -79,6 +156,7 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
     });
   }
 
+  // -- Result selection --
   function toggleResultItem(itemId: number) {
     setSelectedResultIds((prev) => {
       const next = new Set(prev);
@@ -92,71 +170,86 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
   }
 
   function selectAllResults() {
-    setSelectedResultIds(new Set(results.map((r) => r.item_id)));
+    setSelectedResultIds(new Set(itemResults.map((r) => r.item_id)));
   }
 
   function deselectAllResults() {
     setSelectedResultIds(new Set());
   }
 
-  const pollTask = useCallback(async (tid: string) => {
-    try {
-      const task: BackgroundTask = await getTaskStatus(tid);
-      setProgress(task.progress ?? 0);
-      setTaskStatus(task.status);
-
-      if (task.status === 'completed') {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        const scanResults = await getScanResults(tid);
-        setResults(scanResults.results);
-        setSelectedResultIds(new Set(scanResults.results.map((r) => r.item_id)));
-        setStep('results');
-      } else if (task.status === 'failed') {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        setError(task.error ?? 'Scan fehlgeschlagen.');
-        setStep('params');
-      } else if (task.status === 'cancelled') {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        setStep('params');
-      }
-    } catch {
-      // Polling-Fehler ignorieren, naechster Versuch kommt
-    }
-  }, []);
-
-  async function handleStartScan() {
+  // -- Full scan --
+  async function handleFullScan() {
     setError(null);
     setStep('scanning');
-    setProgress(0);
-    setTaskStatus('starting');
+    setScanPhaseLabel('Stufe 1: Kategorien werden gescannt...');
+    setStage1Results([]);
+    setItemResults([]);
 
     try {
-      const task = await startScan({
-        category_ids: Array.from(selectedCatIds),
-        cycles,
-        diode_type: diodeType,
-        top_n: topN,
+      const result = await runFullScan({
+        theme_id: selectedThemeId,
+        category_cycles: categoryCycles,
+        item_cycles: itemCycles,
+        top_categories: topCategories,
+        top_items: topItems,
+        method,
       });
-      setTaskId(task.task_id);
-      pollingRef.current = setInterval(() => pollTask(task.task_id), 1000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Scan konnte nicht gestartet werden.');
-      setStep('params');
-    }
-  }
 
-  async function handleCancelScan() {
-    if (taskId) {
-      try {
-        await cancelTask(taskId);
-      } catch {
-        // Abbruch-Fehler ignorieren
+      if ('error' in result) {
+        setError((result as unknown as HardwareErrorResponse).error);
+        setStep('full-config');
+        return;
       }
+
+      setScanPhaseLabel('Stufe 2: Items werden gescannt...');
+
+      // Small delay so the user sees the phase change
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      setStage1Results(result.stage1_categories);
+      setItemResults(result.stage2_items);
+      setResultSignalQuality(result.signal_quality);
+      setSelectedResultIds(new Set(result.stage2_items.map((r) => r.item_id)));
+      setStep('results');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Scan fehlgeschlagen.');
+      setStep('full-config');
     }
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    setStep('params');
   }
 
+  // -- Manual scan --
+  async function handleManualScan() {
+    setError(null);
+    setStep('scanning');
+    setScanPhaseLabel('Items werden gescannt...');
+    setStage1Results([]);
+    setItemResults([]);
+
+    try {
+      const result = await runItemScan({
+        category_ids: Array.from(selectedCatIds),
+        cycles: manualCycles,
+        top_n: manualTopN,
+        method: manualMethod,
+      });
+
+      if ('error' in result) {
+        setError((result as unknown as HardwareErrorResponse).error);
+        setStep('manual-params');
+        return;
+      }
+
+      setItemResults(result.results);
+      setResultSignalQuality(result.signal_quality);
+      setSelectedResultIds(new Set(result.results.map((r) => r.item_id)));
+      setStep('results');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Scan fehlgeschlagen.');
+      setStep('manual-params');
+    }
+  }
+
+  // -- Accept results into HealingSheet --
   async function handleAcceptResults() {
     if (!healingSheetId || selectedResultIds.size === 0) return;
     setError(null);
@@ -172,19 +265,17 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
     }
   }
 
+  // -- Reset --
   function resetScan() {
-    setStep('categories');
-    setSelectedCatIds(new Set());
-    setResults([]);
+    setStep('mode-select');
+    setStage1Results([]);
+    setItemResults([]);
     setSelectedResultIds(new Set());
-    setProgress(0);
-    setTaskId(null);
+    setSelectedCatIds(new Set());
     setError(null);
   }
 
-  const stepIndex = ['categories', 'params', 'scanning', 'results', 'accepted'].indexOf(step);
-
-  // Gruppiere Kategorien nach Theme
+  // -- Grouped categories for manual mode --
   const grouped = new Map<string, MorphicCategoryInfo[]>();
   for (const cat of categories) {
     const themeName = themes.find((t) => t.id === cat.theme_id)?.name ?? 'Sonstige';
@@ -196,52 +287,300 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
     }
   }
 
-  if (loading) {
+  if (loadingData) {
     return <div className="loading-spinner" />;
   }
 
   return (
     <div>
-      {/* Stepper */}
-      <div className="stepper">
-        {STEP_LABELS.map((label, idx) => (
-          <div key={label} className="stepper-step">
-            {idx > 0 && (
-              <div className={`stepper-line${idx <= stepIndex ? ' completed' : ''}`} />
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <div
-                className={`stepper-dot${
-                  idx === stepIndex ? ' active' : idx < stepIndex ? ' completed' : ''
-                }`}
-              >
-                {idx < stepIndex ? '\u2713' : idx + 1}
-              </div>
-              <span
-                className={`stepper-label${
-                  idx === stepIndex ? ' active' : idx < stepIndex ? ' completed' : ''
-                }`}
-              >
-                {label}
-              </span>
-            </div>
-          </div>
-        ))}
+      {/* Hardware Status Bar */}
+      <div
+        className="card"
+        style={{
+          marginBottom: 16,
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              background: hwChecking
+                ? 'var(--color-border)'
+                : hwConnected
+                  ? 'var(--color-accent-green)'
+                  : 'var(--color-accent-red)',
+              boxShadow: hwConnected && !hwChecking
+                ? '0 0 8px var(--color-accent-green)'
+                : 'none',
+              animation: hwConnected && !hwChecking ? 'pulse 2s ease-in-out infinite' : 'none',
+            }}
+          />
+          <span style={{ fontWeight: 500 }}>
+            {hwChecking
+              ? 'Diode wird geprueft...'
+              : hwConnected
+                ? 'Diode verbunden'
+                : 'Diode nicht verbunden'}
+          </span>
+          {hwConnected && !hwChecking && (
+            <span
+              style={{
+                fontSize: 'var(--font-size-sm)',
+                opacity: 0.6,
+                marginLeft: 8,
+              }}
+            >
+              Signalqualitaet: {hwSignalQuality.toFixed(1)}%
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!hwConnected && !hwChecking && (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleConnectHardware}
+              type="button"
+            >
+              Verbinden
+            </button>
+          )}
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={checkHardwareStatus}
+            disabled={hwChecking}
+            type="button"
+          >
+            Status pruefen
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div className="card" style={{ borderLeft: '3px solid var(--color-accent-red)', marginBottom: 16 }}>
+        <div
+          className="card"
+          style={{ borderLeft: '3px solid var(--color-accent-red)', marginBottom: 16 }}
+        >
           <p style={{ color: 'var(--color-accent-red)' }}>{error}</p>
         </div>
       )}
 
-      {/* Schritt 1: Kategorie-Auswahl */}
-      {step === 'categories' && (
+      {/* Step: Mode Selection */}
+      {step === 'mode-select' && (
+        <div className="card">
+          <div className="card-header">
+            <h3>Scan-Modus waehlen</h3>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('full');
+                setStep('full-config');
+              }}
+              style={{
+                padding: 24,
+                border: '2px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg)',
+                background: 'var(--color-white)',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'all var(--transition-fast)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--color-primary)';
+                e.currentTarget.style.background = 'rgba(46, 117, 181, 0.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--color-border)';
+                e.currentTarget.style.background = 'var(--color-white)';
+              }}
+            >
+              <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600, marginBottom: 8, color: 'var(--color-primary-dark)' }}>
+                Voll-Scan (automatisch)
+              </div>
+              <div style={{ fontSize: 'var(--font-size-sm)', opacity: 0.7, lineHeight: 1.5 }}>
+                2-stufiger Scan: Zuerst werden die relevantesten Kategorien ermittelt, dann die
+                besten Items innerhalb dieser Kategorien gescannt. Empfohlen fuer die meisten
+                Anwendungsfaelle.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('manual');
+                setStep('manual-categories');
+              }}
+              style={{
+                padding: 24,
+                border: '2px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg)',
+                background: 'var(--color-white)',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'all var(--transition-fast)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--color-primary)';
+                e.currentTarget.style.background = 'rgba(46, 117, 181, 0.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--color-border)';
+                e.currentTarget.style.background = 'var(--color-white)';
+              }}
+            >
+              <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600, marginBottom: 8, color: 'var(--color-primary-dark)' }}>
+                Manueller Scan
+              </div>
+              <div style={{ fontSize: 'var(--font-size-sm)', opacity: 0.7, lineHeight: 1.5 }}>
+                Waehlen Sie selbst die Kategorien aus, in denen gescannt werden soll. Ideal wenn
+                Sie bereits wissen, welche Bereiche relevant sind.
+              </div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Full Scan Config */}
+      {step === 'full-config' && (
+        <div className="card">
+          <div className="card-header">
+            <h3>Voll-Scan konfigurieren</h3>
+          </div>
+          <div className="form-row-3">
+            <div className="form-group">
+              <label className="form-label">Theme (optional)</label>
+              <select
+                className="form-input"
+                value={selectedThemeId ?? ''}
+                onChange={(e) =>
+                  setSelectedThemeId(e.target.value ? Number(e.target.value) : undefined)
+                }
+              >
+                <option value="">Alle Themes</option>
+                {themes.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Methode</label>
+              <select
+                className="form-input"
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+              >
+                {DIODE_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Top Kategorien</label>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                max={50}
+                value={topCategories}
+                onChange={(e) => setTopCategories(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="form-row-3">
+            <div className="form-group">
+              <label className="form-label">Kategorie-Zyklen</label>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                max={1000}
+                value={categoryCycles}
+                onChange={(e) => setCategoryCycles(Number(e.target.value))}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Item-Zyklen</label>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                max={1000}
+                value={itemCycles}
+                onChange={(e) => setItemCycles(Number(e.target.value))}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Top Items</label>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                max={500}
+                value={topItems}
+                onChange={(e) => setTopItems(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '12px 16px',
+              background: 'var(--color-table-row-alt)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)',
+            }}
+          >
+            <strong>{selectedThemeId ? themes.find((t) => t.id === selectedThemeId)?.name : 'Alle Themes'}</strong>
+            {' | '}
+            <strong>{categoryCycles}</strong> Kat.-Zyklen |{' '}
+            <strong>{itemCycles}</strong> Item-Zyklen |{' '}
+            Top <strong>{topCategories}</strong> Kategorien{' '}
+            &rarr; Top <strong>{topItems}</strong> Items |{' '}
+            <strong>{DIODE_METHODS.find((m) => m.value === method)?.label}</strong>
+          </div>
+          <div className="form-actions">
+            <button
+              className="btn btn-secondary"
+              onClick={() => setStep('mode-select')}
+              type="button"
+            >
+              Zurueck
+            </button>
+            <button
+              className="btn btn-success btn-lg"
+              onClick={handleFullScan}
+              disabled={!hwConnected}
+              type="button"
+            >
+              Voll-Scan starten
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Manual - Category Selection */}
+      {step === 'manual-categories' && (
         <div className="card">
           <div className="card-header">
             <h3>Kategorien auswaehlen</h3>
-            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text)', opacity: 0.6 }}>
-              {selectedCatIds.size} ausgewaehlt (max. 21)
+            <span
+              style={{
+                fontSize: 'var(--font-size-sm)',
+                color: 'var(--color-text)',
+                opacity: 0.6,
+              }}
+            >
+              {selectedCatIds.size} ausgewaehlt
             </span>
           </div>
           {Array.from(grouped.entries()).map(([themeName, cats]) => (
@@ -257,10 +596,11 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
                       type="checkbox"
                       checked={selectedCatIds.has(cat.id)}
                       onChange={() => toggleCategory(cat.id)}
-                      disabled={!selectedCatIds.has(cat.id) && selectedCatIds.size >= 21}
                     />
                     <span style={{ flex: 1 }}>{cat.name}</span>
-                    <span style={{ opacity: 0.4, fontSize: 'var(--font-size-sm)' }}>{cat.item_count}</span>
+                    <span style={{ opacity: 0.4, fontSize: 'var(--font-size-sm)' }}>
+                      {cat.item_count}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -268,8 +608,15 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
           ))}
           <div className="form-actions">
             <button
+              className="btn btn-secondary"
+              onClick={() => setStep('mode-select')}
+              type="button"
+            >
+              Zurueck
+            </button>
+            <button
               className="btn btn-primary"
-              onClick={() => setStep('params')}
+              onClick={() => setStep('manual-params')}
               disabled={selectedCatIds.size === 0}
               type="button"
             >
@@ -279,8 +626,8 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
         </div>
       )}
 
-      {/* Schritt 2: Scan-Parameter */}
-      {step === 'params' && (
+      {/* Step: Manual - Scan Parameters */}
+      {step === 'manual-params' && (
         <div className="card">
           <div className="card-header">
             <h3>Scan-Parameter</h3>
@@ -293,19 +640,21 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
                 type="number"
                 min={1}
                 max={1000}
-                value={cycles}
-                onChange={(e) => setCycles(Number(e.target.value))}
+                value={manualCycles}
+                onChange={(e) => setManualCycles(Number(e.target.value))}
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Diode-Typ</label>
+              <label className="form-label">Methode</label>
               <select
                 className="form-input"
-                value={diodeType}
-                onChange={(e) => setDiodeType(e.target.value)}
+                value={manualMethod}
+                onChange={(e) => setManualMethod(e.target.value)}
               >
-                {DIODE_TYPES.map((dt) => (
-                  <option key={dt.value} value={dt.value}>{dt.label}</option>
+                {DIODE_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -316,124 +665,257 @@ export default function ScanView({ healingSheetId }: ScanViewProps) {
                 type="number"
                 min={1}
                 max={500}
-                value={topN}
-                onChange={(e) => setTopN(Number(e.target.value))}
+                value={manualTopN}
+                onChange={(e) => setManualTopN(Number(e.target.value))}
               />
             </div>
           </div>
-          <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--color-table-row-alt)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)' }}>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '12px 16px',
+              background: 'var(--color-table-row-alt)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)',
+            }}
+          >
             <strong>{selectedCatIds.size}</strong> Kategorien ausgewaehlt |{' '}
-            <strong>{cycles}</strong> Zyklen |{' '}
-            <strong>{DIODE_TYPES.find((d) => d.value === diodeType)?.label}</strong> |{' '}
-            Top <strong>{topN}</strong>
+            <strong>{manualCycles}</strong> Zyklen |{' '}
+            <strong>{DIODE_METHODS.find((m) => m.value === manualMethod)?.label}</strong> |{' '}
+            Top <strong>{manualTopN}</strong>
           </div>
           <div className="form-actions">
-            <button className="btn btn-secondary" onClick={() => setStep('categories')} type="button">
+            <button
+              className="btn btn-secondary"
+              onClick={() => setStep('manual-categories')}
+              type="button"
+            >
               Zurueck
             </button>
-            <button className="btn btn-success btn-lg" onClick={handleStartScan} type="button">
+            <button
+              className="btn btn-success btn-lg"
+              onClick={handleManualScan}
+              disabled={!hwConnected}
+              type="button"
+            >
               Scan starten
             </button>
           </div>
         </div>
       )}
 
-      {/* Schritt 3: Scan laeuft */}
+      {/* Step: Scanning */}
       {step === 'scanning' && (
         <div className="card" style={{ textAlign: 'center' }}>
           <div className="card-header" style={{ justifyContent: 'center' }}>
             <h3>Scan laeuft...</h3>
           </div>
-          <div style={{ padding: '32px 0' }}>
-            <div className="progress-bar progress-bar-lg" style={{ marginBottom: 16 }}>
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            <p style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600 }}>
-              {Math.round(progress * 100)}%
+          <div style={{ padding: '48px 0' }}>
+            {/* Pulsating dot */}
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                background: 'var(--color-primary)',
+                margin: '0 auto 24px',
+                animation: 'pulse 1.5s ease-in-out infinite',
+                boxShadow: '0 0 24px rgba(46, 117, 181, 0.4)',
+              }}
+            />
+            <p
+              style={{
+                fontSize: 'var(--font-size-lg)',
+                fontWeight: 600,
+                marginBottom: 12,
+              }}
+            >
+              {scanPhaseLabel}
             </p>
-            <p style={{ fontSize: 'var(--font-size-sm)', opacity: 0.6, marginTop: 8 }}>
-              Status: {taskStatus} | {selectedCatIds.size} Kategorien | {cycles} Zyklen
+            <p
+              style={{
+                fontSize: 'var(--font-size-sm)',
+                opacity: 0.5,
+              }}
+            >
+              Die Hardware-Diode wird abgefragt. Dies kann 10-30 Sekunden dauern.
             </p>
           </div>
-          <button className="btn btn-danger" onClick={handleCancelScan} type="button">
-            Scan abbrechen
-          </button>
         </div>
       )}
 
-      {/* Schritt 4: Ergebnisse */}
+      {/* Step: Results */}
       {step === 'results' && (
-        <div className="card">
-          <div className="card-header">
-            <h3>Scan-Ergebnisse ({results.length})</h3>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-sm btn-secondary" onClick={selectAllResults} type="button">
-                Alle
-              </button>
-              <button className="btn btn-sm btn-secondary" onClick={deselectAllResults} type="button">
-                Keine
-              </button>
+        <div>
+          {/* Stage 1: Category results (only for full scan) */}
+          {mode === 'full' && stage1Results.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-header">
+                <h3>Stufe 1: Ausgewaehlte Kategorien ({stage1Results.length})</h3>
+                <span style={{ fontSize: 'var(--font-size-sm)', opacity: 0.6 }}>
+                  Signalqualitaet: {resultSignalQuality.toFixed(1)}%
+                </span>
+              </div>
+              <div className="table-container">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Kategorie</th>
+                      <th>Theme</th>
+                      <th>Items</th>
+                      <th>Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stage1Results.map((cat, idx) => (
+                      <tr
+                        key={cat.category_id}
+                        style={
+                          idx < 3
+                            ? {
+                                background:
+                                  idx === 0
+                                    ? 'rgba(1, 184, 148, 0.12)'
+                                    : idx === 1
+                                      ? 'rgba(1, 184, 148, 0.08)'
+                                      : 'rgba(1, 184, 148, 0.04)',
+                              }
+                            : undefined
+                        }
+                      >
+                        <td style={{ fontWeight: idx < 3 ? 700 : 400 }}>{idx + 1}</td>
+                        <td style={{ fontWeight: 500 }}>{cat.category_name}</td>
+                        <td>{cat.theme_name ?? '-'}</td>
+                        <td>{cat.item_count}</td>
+                        <td style={{ fontWeight: idx < 3 ? 600 : 400 }}>{cat.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 40 }}></th>
-                  <th>#</th>
-                  <th>Text</th>
-                  <th>Kategorie</th>
-                  <th>Score</th>
-                  <th>Qualitaet</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map((r) => (
-                  <tr key={r.item_id} onClick={() => toggleResultItem(r.item_id)}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedResultIds.has(r.item_id)}
-                        onChange={() => toggleResultItem(r.item_id)}
-                        style={{ accentColor: 'var(--color-primary)' }}
-                      />
-                    </td>
-                    <td>{r.rank}</td>
-                    <td style={{ fontWeight: 500 }}>{r.text_primary ?? '-'}</td>
-                    <td>{r.category_name}</td>
-                    <td>{r.score.toFixed(1)}</td>
-                    <td>{r.quality_score?.toFixed(1) ?? '-'}</td>
+          )}
+
+          {/* Stage 2: Item results */}
+          <div className="card">
+            <div className="card-header">
+              <h3>
+                {mode === 'full' ? 'Stufe 2: ' : ''}Scan-Ergebnisse ({itemResults.length})
+              </h3>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {mode !== 'full' && (
+                  <span style={{ fontSize: 'var(--font-size-sm)', opacity: 0.6, marginRight: 8 }}>
+                    Signalqualitaet: {resultSignalQuality.toFixed(1)}%
+                  </span>
+                )}
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={selectAllResults}
+                  type="button"
+                >
+                  Alle
+                </button>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={deselectAllResults}
+                  type="button"
+                >
+                  Keine
+                </button>
+              </div>
+            </div>
+            <div className="table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}></th>
+                    <th>#</th>
+                    <th>Text</th>
+                    <th>Kategorie</th>
+                    <th>Score</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-secondary" onClick={() => setStep('params')} type="button">
-              Neuer Scan
-            </button>
-            {healingSheetId ? (
-              <button
-                className="btn btn-success"
-                onClick={handleAcceptResults}
-                disabled={selectedResultIds.size === 0}
-                type="button"
-              >
-                {selectedResultIds.size} Items ins HealingSheet uebernehmen
+                </thead>
+                <tbody>
+                  {itemResults.map((r, idx) => (
+                    <tr
+                      key={r.item_id}
+                      onClick={() => toggleResultItem(r.item_id)}
+                      style={
+                        idx < 3
+                          ? {
+                              background:
+                                idx === 0
+                                  ? 'rgba(1, 184, 148, 0.12)'
+                                  : idx === 1
+                                    ? 'rgba(1, 184, 148, 0.08)'
+                                    : 'rgba(1, 184, 148, 0.04)',
+                            }
+                          : undefined
+                      }
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedResultIds.has(r.item_id)}
+                          onChange={() => toggleResultItem(r.item_id)}
+                          style={{ accentColor: 'var(--color-primary)' }}
+                        />
+                      </td>
+                      <td style={{ fontWeight: idx < 3 ? 700 : 400 }}>{idx + 1}</td>
+                      <td style={{ fontWeight: 500 }}>
+                        {r.text_primary ?? '-'}
+                        {r.text_secondary && (
+                          <span
+                            style={{
+                              display: 'block',
+                              fontSize: 'var(--font-size-sm)',
+                              opacity: 0.5,
+                              marginTop: 2,
+                            }}
+                          >
+                            {r.text_secondary}
+                          </span>
+                        )}
+                      </td>
+                      <td>{r.category_name}</td>
+                      <td style={{ fontWeight: idx < 3 ? 600 : 400 }}>{r.score}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-secondary" onClick={resetScan} type="button">
+                Neuer Scan
               </button>
-            ) : (
-              <p style={{ fontSize: 'var(--font-size-sm)', opacity: 0.6, alignSelf: 'center' }}>
-                Kein HealingSheet ausgewaehlt. Starten Sie den Scan ueber den HealingSheet-Editor.
-              </p>
-            )}
+              {healingSheetId ? (
+                <button
+                  className="btn btn-success"
+                  onClick={handleAcceptResults}
+                  disabled={selectedResultIds.size === 0}
+                  type="button"
+                >
+                  {selectedResultIds.size} Items ins HealingSheet uebernehmen
+                </button>
+              ) : (
+                <p
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    opacity: 0.6,
+                    alignSelf: 'center',
+                  }}
+                >
+                  Kein HealingSheet ausgewaehlt. Starten Sie den Scan ueber den
+                  HealingSheet-Editor.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Schritt 5: Uebernommen */}
+      {/* Step: Accepted */}
       {step === 'accepted' && (
         <div className="card" style={{ textAlign: 'center' }}>
           <div style={{ padding: '32px 0' }}>

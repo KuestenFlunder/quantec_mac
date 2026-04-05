@@ -197,6 +197,113 @@ export function cancelTask(taskId: string): Promise<{ task_id: string; status: s
   return request(`/scan/tasks/${taskId}/cancel`, { method: 'POST' });
 }
 
+// -- Hardware Diode --
+
+const HW_API = 'http://localhost:8000/api/hardware';
+
+export interface HardwareScanFullResult {
+  stage1_categories: Array<{
+    category_id: number;
+    category_name: string;
+    theme_name: string | null;
+    item_count: number;
+    score: number;
+  }>;
+  stage2_items: Array<{
+    item_id: number;
+    category_id: number;
+    category_name: string;
+    text_primary: string | null;
+    text_secondary: string | null;
+    score: number;
+  }>;
+  total_categories_scanned: number;
+  total_items_scanned: number;
+  method: string;
+  signal_quality: number;
+}
+
+export interface HardwareCategoryScanResult {
+  total_categories: number;
+  results: Array<{
+    category_id: number;
+    category_name: string;
+    theme_name: string | null;
+    item_count: number;
+    score: number;
+  }>;
+  signal_quality: number;
+  method: string;
+}
+
+export interface HardwareItemScanResult {
+  total_items: number;
+  results: Array<{
+    item_id: number;
+    category_id: number;
+    category_name: string;
+    text_primary: string | null;
+    text_secondary: string | null;
+    score: number;
+  }>;
+  signal_quality: number;
+  method: string;
+}
+
+export function getHardwareStatus(): Promise<{ connected: boolean; signal_quality: number; device_url: string }> {
+  return fetch(`${HW_API}/status`).then(r => r.json());
+}
+
+export function connectHardware(): Promise<{ connected: boolean; message: string }> {
+  return fetch(`${HW_API}/connect`, { method: 'POST' }).then(r => r.json());
+}
+
+export function runFullScan(params: {
+  theme_id?: number;
+  category_cycles?: number;
+  item_cycles?: number;
+  top_categories?: number;
+  top_items?: number;
+  method?: string;
+}): Promise<HardwareScanFullResult> {
+  const qs = new URLSearchParams();
+  if (params.theme_id != null) qs.set('theme_id', String(params.theme_id));
+  if (params.category_cycles) qs.set('category_cycles', String(params.category_cycles));
+  if (params.item_cycles) qs.set('item_cycles', String(params.item_cycles));
+  if (params.top_categories) qs.set('top_categories', String(params.top_categories));
+  if (params.top_items) qs.set('top_items', String(params.top_items));
+  if (params.method) qs.set('method', params.method);
+  return fetch(`${HW_API}/scan/full?${qs}`, { method: 'POST' }).then(r => r.json());
+}
+
+export function runCategoryScan(params: {
+  theme_id?: number;
+  cycles?: number;
+  top_n?: number;
+  method?: string;
+}): Promise<HardwareCategoryScanResult> {
+  const qs = new URLSearchParams();
+  if (params.theme_id != null) qs.set('theme_id', String(params.theme_id));
+  if (params.cycles) qs.set('cycles', String(params.cycles));
+  if (params.top_n) qs.set('top_n', String(params.top_n));
+  if (params.method) qs.set('method', params.method);
+  return fetch(`${HW_API}/scan/categories?${qs}`, { method: 'POST' }).then(r => r.json());
+}
+
+export function runItemScan(params: {
+  category_ids: number[];
+  cycles?: number;
+  top_n?: number;
+  method?: string;
+}): Promise<HardwareItemScanResult> {
+  const qs = new URLSearchParams();
+  qs.set('category_ids', params.category_ids.join(','));
+  if (params.cycles) qs.set('cycles', String(params.cycles));
+  if (params.top_n) qs.set('top_n', String(params.top_n));
+  if (params.method) qs.set('method', params.method);
+  return fetch(`${HW_API}/scan/items?${qs}`, { method: 'POST' }).then(r => r.json());
+}
+
 // -- Send --
 
 export function startDirectSend(sheetId: number, data?: SendRequest): Promise<BackgroundTask> {
