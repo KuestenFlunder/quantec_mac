@@ -186,8 +186,11 @@ export interface MorphicCategoryInfo {
 export interface MorphicItem {
   id: number;
   category_id: number;
-  text: string;
-  description: string | null;
+  category_name: string;
+  text_primary: string | null;
+  text_secondary: string | null;
+  quality_score: number | null;
+  similarity: number | null;
 }
 
 export interface SendJob {

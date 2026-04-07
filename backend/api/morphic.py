@@ -248,7 +248,7 @@ def _semantic_search(
     sql = """
         SELECT e.id, e.category_id, e.category_name, e.text_primary,
                e.text_secondary, e.quality_score,
-               round((1 - (e.embedding <=> :emb::vector))::numeric * 100, 1) as similarity
+               round(CAST((1 - (e.embedding <=> CAST(:emb AS vector))) AS numeric) * 100, 1) as similarity
         FROM esoteric_item e
         WHERE e.embedding IS NOT NULL
     """
@@ -268,7 +268,7 @@ def _semantic_search(
         """
         params["theme_pattern"] = f"%{theme}%"
 
-    sql += " ORDER BY e.embedding <=> :emb2::vector LIMIT :lim"
+    sql += " ORDER BY e.embedding <=> CAST(:emb2 AS vector) LIMIT :lim"
     params["emb2"] = str(emb)
 
     try:
@@ -310,10 +310,10 @@ def _hybrid_search(
         )
         SELECT c.id, c.category_id, c.category_name, c.text_primary,
                c.text_secondary, c.quality_score,
-               round((1 - (e.embedding <=> :emb::vector))::numeric * 100, 1) as similarity
+               round(CAST((1 - (e.embedding <=> CAST(:emb AS vector))) AS numeric) * 100, 1) as similarity
         FROM candidates c
         JOIN esoteric_item e ON e.id = c.id
-        ORDER BY e.embedding <=> :emb2::vector
+        ORDER BY e.embedding <=> CAST(:emb2 AS vector)
         LIMIT :lim
     """
     params["emb2"] = str(emb)

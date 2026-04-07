@@ -195,8 +195,8 @@ export default function MorphicBrowser({ onSelectItem }: MorphicBrowserProps) {
               <tbody>
                 {displayItems.map((item) => (
                   <tr key={item.id} onClick={() => onSelectItem?.(item)}>
-                    <td style={{ fontWeight: 500 }}>{item.text}</td>
-                    <td style={{ opacity: 0.7 }}>{item.description ?? '-'}</td>
+                    <td style={{ fontWeight: 500 }}>{item.text_primary ?? '-'}</td>
+                    <td style={{ opacity: 0.7 }}>{item.text_secondary ?? '-'}</td>
                     {onSelectItem && (
                       <td>
                         <button className="btn btn-primary btn-sm" type="button">

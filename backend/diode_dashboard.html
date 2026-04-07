@@ -1,0 +1,1452 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUANTEC Diode Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --border: #1e2a3a;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #38bdf8;
+    --green: #22c55e;
+    --yellow: #eab308;
+    --red: #ef4444;
+    --cyan: #06b6d4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* --- Header --- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h1 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.3s;
+  }
+  .dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.streaming { background: var(--green); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .header-stats {
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .header-stats .stat-val { color: var(--text); font-weight: 600; }
+  .header-actions { display: flex; gap: 8px; }
+
+  button {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { background: #7dd3fc; }
+  button.danger { border-color: var(--red); color: var(--red); }
+  button.danger:hover { background: var(--red); color: white; }
+  button:disabled { opacity: 0.4; pointer-events: none; }
+
+  /* --- Main Layout --- */
+  .main-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* --- Center Column: Waveform + Log --- */
+  .center-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* --- Waveform --- */
+  .waveform-panel {
+    flex: 7;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+    min-height: 0;
+  }
+  .waveform-panel canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: #050810;
+  }
+  .wave-legend {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    font-size: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: rgba(10, 14, 26, 0.85);
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .wave-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .wave-legend-swatch {
+    width: 14px;
+    height: 3px;
+    border-radius: 1px;
+  }
+
+  /* --- Deviation Counters Bar --- */
+  .deviation-bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 6px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .deviation-bar .counter { color: var(--muted); }
+  .deviation-bar .counter .val { font-weight: 700; }
+  .deviation-bar .counter .val.warn { color: var(--yellow); }
+  .deviation-bar .counter .val.crit { color: var(--red); }
+
+  /* --- Log Panel --- */
+  .log-panel {
+    flex: 3;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+  }
+  .log-header {
+    padding: 8px 16px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-size: 12px;
+    min-height: 0;
+  }
+  .log-content::-webkit-scrollbar { width: 6px; }
+  .log-content::-webkit-scrollbar-track { background: transparent; }
+  .log-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .log-entry {
+    padding: 2px 16px;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .log-entry.sigma2 { color: var(--yellow); }
+  .log-entry.sigma3 { color: var(--red); font-weight: 600; }
+
+  /* --- Right Sidebar: Scan Panel --- */
+  .right-sidebar {
+    width: 320px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    background: var(--surface);
+  }
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-section h3 {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  .form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .form-row label {
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 70px;
+  }
+  .form-row input, .form-row select {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+  }
+  .form-row input:focus, .form-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  /* Scan results bar chart */
+  .scan-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 0;
+  }
+  .scan-results::-webkit-scrollbar { width: 6px; }
+  .scan-results::-webkit-scrollbar-track { background: transparent; }
+  .scan-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .slot-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+  .slot-bar-label {
+    min-width: 32px;
+    text-align: right;
+    color: var(--muted);
+  }
+  .slot-bar-track {
+    flex: 1;
+    height: 18px;
+    background: #1a1a2e;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .slot-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+    min-width: 1px;
+  }
+  .slot-bar-fill.top1 { background: linear-gradient(90deg, var(--red), #f97316); }
+  .slot-bar-fill.top2 { background: linear-gradient(90deg, #f97316, var(--yellow)); }
+  .slot-bar-fill.top3 { background: linear-gradient(90deg, var(--yellow), #a3e635); }
+  .slot-bar-fill.normal { background: linear-gradient(90deg, var(--cyan), var(--accent)); }
+  .slot-bar-value {
+    min-width: 36px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .scan-status {
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .tab-btn {
+    flex:1; padding:5px 0; border:1px solid var(--border); border-radius:6px;
+    background:var(--bg); color:var(--muted); font-family:inherit; font-size:10px;
+    cursor:pointer; transition:all 0.2s;
+  }
+  .tab-btn.active { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+  .tab-btn:hover:not(.active) { border-color:var(--accent); color:var(--accent); }
+  .item-row {
+    padding:6px 8px; border-bottom:1px solid var(--border); font-size:11px;
+    display:flex; gap:8px; align-items:flex-start;
+  }
+  .item-row:hover { background:rgba(56,189,248,0.05); }
+  .item-rank { color:var(--accent); font-weight:700; min-width:20px; }
+  .item-rank.r1 { color:var(--red); }
+  .item-rank.r2 { color:#f97316; }
+  .item-rank.r3 { color:var(--yellow); }
+  .item-cat { color:var(--muted); font-size:10px; }
+  .item-text { color:var(--text); }
+  .item-score { color:var(--accent); font-weight:600; min-width:30px; text-align:right; margin-left:auto; }
+  .stage-header {
+    padding:6px 8px; font-size:10px; font-weight:600; letter-spacing:1px;
+    text-transform:uppercase; color:var(--accent); background:rgba(56,189,248,0.08);
+    border-bottom:1px solid var(--border);
+  }
+  .scan-info {
+    margin-top: 12px;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* --- Left sidebar: compact info --- */
+  .left-sidebar {
+    width: 220px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    background: var(--surface);
+    overflow-y: auto;
+  }
+  .info-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .info-section h3 {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 12px;
+  }
+  .info-label { color: var(--muted); }
+  .info-val { font-weight: 600; }
+  .info-val.good { color: var(--green); }
+  .info-val.warn { color: var(--yellow); }
+  .info-val.bad { color: var(--red); }
+
+  /* Gauge */
+  .gauge-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 0;
+  }
+  .gauge {
+    width: 140px; height: 140px;
+    position: relative;
+  }
+  .gauge canvas { width: 100%; height: 100%; }
+  .gauge-text {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center;
+  }
+  .gauge-value { font-size: 32px; font-weight: 700; color: var(--accent); }
+  .gauge-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Bit matrix */
+  .bit-matrix {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    gap: 1px;
+  }
+  .bit-cell {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    transition: background 0.15s;
+  }
+  .bit-cell.one { background: var(--accent); box-shadow: 0 0 2px var(--accent); }
+  .bit-cell.zero { background: #1a1a2e; }
+
+  /* Ratio bar (compact) */
+  .ratio-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ratio-track {
+    flex: 1;
+    height: 14px;
+    background: #1a1a2e;
+    border-radius: 7px;
+    overflow: hidden;
+    position: relative;
+  }
+  .ratio-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--accent));
+    border-radius: 7px;
+    transition: width 0.2s;
+  }
+  .ratio-nums {
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 28px;
+    text-align: center;
+  }
+
+  /* Responsive */
+  @media (max-width: 1100px) {
+    .left-sidebar { width: 180px; }
+    .right-sidebar { width: 260px; }
+  }
+  @media (max-width: 900px) {
+    .main-layout { flex-direction: column; }
+    .left-sidebar, .right-sidebar { width: 100%; border: none; border-bottom: 1px solid var(--border); }
+    .waveform-panel { min-height: 300px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ========== HEADER ========== -->
+<div class="header">
+  <div class="header-left">
+    <h1>
+      <div class="dot" id="statusDot"></div>
+      QUANTEC Diode Dashboard
+    </h1>
+  </div>
+  <div class="header-stats">
+    <span class="counter"><span class="stat-val" id="connStatus">Getrennt</span></span>
+    <span class="counter">Pakete/s: <span class="stat-val" id="packetsPerSec">0</span></span>
+    <span class="counter">Bits: <span class="stat-val" id="totalBits">0</span></span>
+    <span class="counter">Laufzeit: <span class="stat-val" id="uptime">--</span></span>
+  </div>
+  <div class="header-actions">
+    <button class="primary" id="btnStream" onclick="toggleStream()">Stream starten</button>
+    <button class="danger" onclick="disconnect()">Trennen</button>
+  </div>
+</div>
+
+<!-- ========== MAIN ========== -->
+<div class="main-layout">
+
+  <!-- Left Sidebar -->
+  <div class="left-sidebar">
+    <div class="info-section">
+      <h3>Signal</h3>
+      <div class="gauge-container">
+        <div class="gauge">
+          <canvas id="gaugeCanvas" width="140" height="140"></canvas>
+          <div class="gauge-text">
+            <div class="gauge-value" id="qualityValue">--</div>
+            <div class="gauge-label">Signal %</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <h3>1/0 Ratio</h3>
+      <div class="ratio-container">
+        <div class="ratio-nums" id="zerosLabel" style="color:var(--muted)">0</div>
+        <div class="ratio-track">
+          <div class="ratio-fill" id="ratioFill" style="width:50%"></div>
+        </div>
+        <div class="ratio-nums" id="onesLabel" style="color:var(--accent)">0</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
+        <span>Nullen</span>
+        <span id="ratioPercent">50.0%</span>
+        <span>Einsen</span>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <h3>Bit-Matrix (128)</h3>
+      <div class="bit-matrix" id="bitMatrix"></div>
+    </div>
+
+    <div class="info-section">
+      <h3>Statistik</h3>
+      <div class="info-row">
+        <span class="info-label">Mittelwert</span>
+        <span class="info-val" id="statMean">--</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Std-Abw.</span>
+        <span class="info-val" id="statStddev">--</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Min</span>
+        <span class="info-val" id="statMin">--</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Max</span>
+        <span class="info-val" id="statMax">--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Center Column -->
+  <div class="center-col">
+    <!-- Waveform -->
+    <div class="waveform-panel">
+      <canvas id="waveCanvas"></canvas>
+      <div class="wave-legend">
+        <div class="wave-legend-item">
+          <div class="wave-legend-swatch" style="background:var(--accent)"></div>
+          <span style="color:var(--muted)">Ratio (Einsen %)</span>
+        </div>
+        <div class="wave-legend-item">
+          <div class="wave-legend-swatch" style="background:#f59e0b"></div>
+          <span style="color:var(--muted)">Gleitender Mittelwert (50)</span>
+        </div>
+        <div class="wave-legend-item">
+          <div class="wave-legend-swatch" style="background:var(--green);opacity:0.3;height:8px"></div>
+          <span style="color:var(--muted)">1-Sigma (normal)</span>
+        </div>
+        <div class="wave-legend-item">
+          <div class="wave-legend-swatch" style="background:var(--yellow);opacity:0.2;height:8px"></div>
+          <span style="color:var(--muted)">2-Sigma (auffaellig)</span>
+        </div>
+        <div class="wave-legend-item">
+          <div class="wave-legend-swatch" style="background:var(--red);opacity:0.15;height:8px"></div>
+          <span style="color:var(--muted)">3-Sigma (signifikant)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deviation Counters -->
+    <div class="deviation-bar">
+      <span class="counter">Pakete: <span class="val" id="devTotal">0</span></span>
+      <span class="counter">Ausserhalb 2-Sigma: <span class="val warn" id="dev2sigma">0</span> (<span class="val warn" id="dev2pct">0.0</span>%)</span>
+      <span class="counter">Ausserhalb 3-Sigma: <span class="val crit" id="dev3sigma">0</span> (<span class="val crit" id="dev3pct">0.0</span>%)</span>
+    </div>
+
+    <!-- Log Panel -->
+    <div class="log-panel">
+      <div class="log-header">
+        <span>Abweichungs-Log (> 2-Sigma)</span>
+        <button onclick="clearLog()" style="padding:3px 8px;font-size:10px">Clear</button>
+      </div>
+      <div class="log-content" id="logContent"></div>
+    </div>
+  </div>
+
+  <!-- Right Sidebar: QUANTEC Scan -->
+  <div class="right-sidebar">
+    <div class="sidebar-section">
+      <h3>QUANTEC Scan</h3>
+
+      <!-- Scan Mode Tabs -->
+      <div style="display:flex;gap:4px;margin-bottom:10px">
+        <button class="tab-btn active" id="tabFull" onclick="switchTab('full')">Voll-Scan</button>
+        <button class="tab-btn" id="tabCat" onclick="switchTab('cat')">Kategorien</button>
+        <button class="tab-btn" id="tabRaw" onclick="switchTab('raw')">Roh-Slots</button>
+      </div>
+
+      <!-- Full Scan Panel -->
+      <div id="panelFull">
+        <div class="form-row">
+          <label>Theme</label>
+          <select id="fullTheme"><option value="">Alle Themes</option></select>
+        </div>
+        <div class="form-row">
+          <label>Top Kat.</label>
+          <input type="number" id="fullTopCat" value="5" min="1" max="50">
+        </div>
+        <div class="form-row">
+          <label>Top Items</label>
+          <input type="number" id="fullTopItems" value="21" min="1" max="100">
+        </div>
+        <div class="form-row">
+          <label>Cycles</label>
+          <input type="number" id="fullCycles" value="88" min="1" max="500">
+        </div>
+        <div class="form-row">
+          <label>Methode</label>
+          <select id="fullMethod">
+            <option value="selection">Selection (Standard)</option>
+            <option value="quantec6">QUANTEC6 (Bit-Walk)</option>
+            <option value="quantec6random">QUANTEC6 + Random</option>
+            <option value="distribution">Distribution (uint32)</option>
+            <option value="remainder">Remainder (XOR)</option>
+          </select>
+        </div>
+        <button class="primary" id="btnFullScan" onclick="runFullScan()" style="width:100%;margin-top:8px">
+          Morphische Felder scannen
+        </button>
+      </div>
+
+      <!-- Category Scan Panel -->
+      <div id="panelCat" style="display:none">
+        <div class="form-row">
+          <label>Theme</label>
+          <select id="catTheme"><option value="">Alle Themes</option></select>
+        </div>
+        <div class="form-row">
+          <label>Top N</label>
+          <input type="number" id="catTopN" value="10" min="1" max="50">
+        </div>
+        <div class="form-row">
+          <label>Cycles</label>
+          <input type="number" id="catCycles" value="88" min="1" max="500">
+        </div>
+        <button class="primary" id="btnCatScan" onclick="runCatScan()" style="width:100%;margin-top:8px">
+          Kategorien scannen
+        </button>
+      </div>
+
+      <!-- Raw Slot Panel -->
+      <div id="panelRaw" style="display:none">
+        <div class="form-row">
+          <label>Slots</label>
+          <input type="number" id="scanSlots" value="21" min="2" max="1000">
+        </div>
+        <div class="form-row">
+          <label>Cycles</label>
+          <input type="number" id="scanCycles" value="88" min="1" max="500">
+        </div>
+        <div class="form-row">
+          <label>Methode</label>
+          <select id="scanMethod">
+            <option value="selection">Selection</option>
+            <option value="quantec6">QUANTEC6</option>
+            <option value="quantec6random">QUANTEC6 + Random</option>
+            <option value="distribution">Distribution</option>
+            <option value="remainder">Remainder</option>
+          </select>
+        </div>
+        <button class="primary" id="btnScan" onclick="runScan()" style="width:100%;margin-top:8px">Scan starten</button>
+      </div>
+
+      <div class="scan-info" id="scanInfo"></div>
+    </div>
+    <div class="scan-results" id="scanResults">
+      <div class="scan-status">Kein Scan ausgefuehrt</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ========== CONFIG ==========
+const API = 'http://localhost:8000/api/hardware';
+const STREAM_URL = API + '/stream';
+const WAVE_HISTORY = 600;
+const MOVING_AVG_WINDOW = 50;
+const MAX_LOG_ENTRIES = 200;
+
+// 128 bits: expected = 64, sigma = sqrt(128 * 0.5 * 0.5) = 5.6569
+const N_BITS = 128;
+const EXPECTED = N_BITS / 2;
+const SIGMA = Math.sqrt(N_BITS * 0.5 * 0.5);
+const EXPECTED_PCT = 50.0;
+const SIGMA_PCT = (SIGMA / N_BITS) * 100;
+
+// Sigma bands in percent
+const SIGMA1_LO = EXPECTED_PCT - SIGMA_PCT;
+const SIGMA1_HI = EXPECTED_PCT + SIGMA_PCT;
+const SIGMA2_LO = EXPECTED_PCT - 2 * SIGMA_PCT;
+const SIGMA2_HI = EXPECTED_PCT + 2 * SIGMA_PCT;
+const SIGMA3_LO = EXPECTED_PCT - 3 * SIGMA_PCT;
+const SIGMA3_HI = EXPECTED_PCT + 3 * SIGMA_PCT;
+
+// ========== STATE ==========
+let evtSource = null;
+let streaming = false;
+let startTime = null;
+let packetCount = 0;
+let totalBitsRead = 0;
+let ppsCounter = 0;
+let ppsValue = 0;
+
+let ratioHistory = [];
+let qualityHistory = [];
+
+// Deviation counters
+let countOutside2Sigma = 0;
+let countOutside3Sigma = 0;
+let logEntries = [];
+
+// ========== INIT ==========
+const bitMatrix = document.getElementById('bitMatrix');
+for (let i = 0; i < 128; i++) {
+  const cell = document.createElement('div');
+  cell.className = 'bit-cell zero';
+  bitMatrix.appendChild(cell);
+}
+
+// PPS counter
+setInterval(function() {
+  ppsValue = ppsCounter;
+  ppsCounter = 0;
+  document.getElementById('packetsPerSec').textContent = ppsValue;
+}, 1000);
+
+// Uptime counter
+setInterval(function() {
+  if (startTime && streaming) {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    document.getElementById('uptime').textContent = m + ':' + String(sec).padStart(2, '0');
+  }
+}, 1000);
+
+// ========== STREAM CONTROL ==========
+function toggleStream() {
+  if (streaming) stopStream();
+  else startStream();
+}
+
+function startStream() {
+  evtSource = new EventSource(STREAM_URL);
+  streaming = true;
+  startTime = Date.now();
+  packetCount = 0;
+  totalBitsRead = 0;
+  ratioHistory = [];
+  qualityHistory = [];
+  countOutside2Sigma = 0;
+  countOutside3Sigma = 0;
+  logEntries = [];
+  document.getElementById('logContent').textContent = '';
+  updateDeviationBar();
+
+  document.getElementById('btnStream').textContent = 'Stream stoppen';
+  document.getElementById('btnStream').classList.remove('primary');
+  document.getElementById('btnStream').classList.add('danger');
+  document.getElementById('statusDot').className = 'dot streaming';
+  document.getElementById('connStatus').textContent = 'Verbinde...';
+  document.getElementById('connStatus').style.color = 'var(--yellow)';
+
+  evtSource.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    if (data.error) {
+      document.getElementById('connStatus').textContent = data.error;
+      document.getElementById('connStatus').style.color = 'var(--red)';
+      stopStream();
+      return;
+    }
+    document.getElementById('connStatus').textContent = 'Streaming';
+    document.getElementById('connStatus').style.color = 'var(--green)';
+    handleData(data);
+  };
+  evtSource.onerror = function() {
+    if (streaming) {
+      document.getElementById('connStatus').textContent = 'Verbindung verloren';
+      document.getElementById('connStatus').style.color = 'var(--red)';
+      stopStream();
+    }
+  };
+}
+
+function stopStream() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  streaming = false;
+  document.getElementById('btnStream').textContent = 'Stream starten';
+  document.getElementById('btnStream').classList.add('primary');
+  document.getElementById('btnStream').classList.remove('danger');
+  document.getElementById('statusDot').className = 'dot';
+  if (document.getElementById('connStatus').textContent === 'Streaming') {
+    document.getElementById('connStatus').textContent = 'Getrennt';
+    document.getElementById('connStatus').style.color = 'var(--muted)';
+  }
+}
+
+function disconnect() {
+  stopStream();
+  fetch(API + '/disconnect', { method: 'POST' });
+}
+
+// ========== DATA HANDLER ==========
+function handleData(data) {
+  packetCount++;
+  ppsCounter++;
+  totalBitsRead += data.bits.length;
+
+  document.getElementById('totalBits').textContent = totalBitsRead.toLocaleString('de-DE');
+
+  // Quality gauge
+  const q = data.signal_quality;
+  document.getElementById('qualityValue').textContent = q.toFixed(1);
+  drawGauge(q);
+
+  // Ratio
+  const ratio = data.ratio;
+  document.getElementById('ratioFill').style.width = ratio + '%';
+  document.getElementById('onesLabel').textContent = data.ones;
+  document.getElementById('zerosLabel').textContent = data.zeros;
+  document.getElementById('ratioPercent').textContent = ratio.toFixed(1) + '%';
+
+  // Histories
+  ratioHistory.push(ratio);
+  qualityHistory.push(q);
+  if (ratioHistory.length > WAVE_HISTORY) ratioHistory.shift();
+  if (qualityHistory.length > WAVE_HISTORY) qualityHistory.shift();
+
+  // Bit matrix
+  const cells = bitMatrix.children;
+  for (let i = 0; i < Math.min(data.bits.length, 128); i++) {
+    cells[i].className = data.bits[i] ? 'bit-cell one' : 'bit-cell zero';
+  }
+
+  // Statistics
+  updateStats();
+
+  // Deviation check
+  checkDeviation(ratio, data.t);
+
+  // Waveform
+  drawWave();
+}
+
+// ========== STATISTICS ==========
+function updateStats() {
+  if (ratioHistory.length === 0) return;
+  const n = ratioHistory.length;
+  let sum = 0;
+  let min = ratioHistory[0];
+  let max = ratioHistory[0];
+  for (let i = 0; i < n; i++) {
+    sum += ratioHistory[i];
+    if (ratioHistory[i] < min) min = ratioHistory[i];
+    if (ratioHistory[i] > max) max = ratioHistory[i];
+  }
+  const mean = sum / n;
+  let varianceSum = 0;
+  for (let i = 0; i < n; i++) {
+    varianceSum += (ratioHistory[i] - mean) * (ratioHistory[i] - mean);
+  }
+  const stddev = Math.sqrt(varianceSum / n);
+
+  document.getElementById('statMean').textContent = mean.toFixed(2) + '%';
+  document.getElementById('statStddev').textContent = stddev.toFixed(2) + '%';
+  document.getElementById('statMin').textContent = min.toFixed(1) + '%';
+  document.getElementById('statMax').textContent = max.toFixed(1) + '%';
+}
+
+// ========== DEVIATION TRACKING ==========
+function checkDeviation(ratio, timestamp) {
+  const deviation = ratio - EXPECTED_PCT;
+  const sigmaCount = Math.abs(deviation) / SIGMA_PCT;
+
+  if (sigmaCount >= 2) {
+    countOutside2Sigma++;
+    if (sigmaCount >= 3) {
+      countOutside3Sigma++;
+    }
+
+    // Format timestamp
+    const d = new Date(timestamp);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    const timeStr = hh + ':' + mm + ':' + ss + '.' + ms;
+
+    const arrow = deviation > 0 ? '\u25B2' : '\u25BC';
+    const sign = deviation > 0 ? '+' : '';
+    const entry = '[' + timeStr + '] ' + arrow + ' ' + ratio.toFixed(1) + '% (' + sign + deviation.toFixed(1) + '%) ' + sigmaCount.toFixed(2) + '\u03C3';
+
+    const cssClass = sigmaCount >= 3 ? 'sigma3' : 'sigma2';
+
+    // Add to log
+    logEntries.push({ text: entry, cssClass: cssClass });
+    if (logEntries.length > MAX_LOG_ENTRIES) {
+      logEntries.shift();
+    }
+
+    const logContent = document.getElementById('logContent');
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + cssClass;
+    div.textContent = entry;
+    logContent.appendChild(div);
+
+    // Trim DOM
+    while (logContent.children.length > MAX_LOG_ENTRIES) {
+      logContent.removeChild(logContent.firstChild);
+    }
+
+    // Auto-scroll
+    logContent.scrollTop = logContent.scrollHeight;
+  }
+
+  updateDeviationBar();
+}
+
+function updateDeviationBar() {
+  document.getElementById('devTotal').textContent = packetCount;
+  document.getElementById('dev2sigma').textContent = countOutside2Sigma;
+  document.getElementById('dev3sigma').textContent = countOutside3Sigma;
+  document.getElementById('dev2pct').textContent = packetCount > 0 ? (countOutside2Sigma / packetCount * 100).toFixed(1) : '0.0';
+  document.getElementById('dev3pct').textContent = packetCount > 0 ? (countOutside3Sigma / packetCount * 100).toFixed(1) : '0.0';
+}
+
+function clearLog() {
+  logEntries = [];
+  var logContent = document.getElementById('logContent');
+  while (logContent.firstChild) {
+    logContent.removeChild(logContent.firstChild);
+  }
+}
+
+// ========== GAUGE ==========
+function drawGauge(value) {
+  const canvas = document.getElementById('gaugeCanvas');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2, r = 55;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Background arc
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25);
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Value arc
+  const pct = Math.min(value / 100, 1);
+  const angle = Math.PI * 0.75 + pct * Math.PI * 1.5;
+  var color;
+  if (value >= 60) color = '#22c55e';
+  else if (value >= 30) color = '#eab308';
+  else color = '#ef4444';
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI * 0.75, angle);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// ========== WAVEFORM ==========
+function drawWave() {
+  const canvas = document.getElementById('waveCanvas');
+  const container = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = container.getBoundingClientRect();
+
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = rect.height + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const w = rect.width;
+  const h = rect.height;
+  const padLeft = 50;
+  const padRight = 10;
+  const padTop = 10;
+  const padBottom = 20;
+  const plotW = w - padLeft - padRight;
+  const plotH = h - padTop - padBottom;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Y-axis mapping: percentage to pixel
+  function yForPct(pct) {
+    return padTop + plotH - (pct / 100) * plotH;
+  }
+
+  // Draw sigma bands (behind everything)
+  // 3-sigma band (red, outermost)
+  ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+  ctx.fillRect(padLeft, yForPct(SIGMA3_HI), plotW, yForPct(SIGMA3_LO) - yForPct(SIGMA3_HI));
+
+  // 2-sigma band (yellow)
+  ctx.fillStyle = 'rgba(234, 179, 8, 0.10)';
+  ctx.fillRect(padLeft, yForPct(SIGMA2_HI), plotW, yForPct(SIGMA2_LO) - yForPct(SIGMA2_HI));
+
+  // 1-sigma band (green, innermost)
+  ctx.fillStyle = 'rgba(34, 197, 94, 0.12)';
+  ctx.fillRect(padLeft, yForPct(SIGMA1_HI), plotW, yForPct(SIGMA1_LO) - yForPct(SIGMA1_HI));
+
+  // Grid lines
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 1;
+  for (var y = 0; y <= 100; y += 10) {
+    var py = yForPct(y);
+    ctx.beginPath();
+    ctx.moveTo(padLeft, py);
+    ctx.lineTo(padLeft + plotW, py);
+    ctx.stroke();
+  }
+
+  // Y-axis labels
+  ctx.fillStyle = '#4a5568';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  for (var y2 = 0; y2 <= 100; y2 += 10) {
+    ctx.fillText(y2 + '%', padLeft - 6, yForPct(y2) + 3);
+  }
+
+  // 50% reference line (red, dashed)
+  ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(padLeft, yForPct(50));
+  ctx.lineTo(padLeft + plotW, yForPct(50));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Sigma boundary labels on right edge
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(34, 197, 94, 0.6)';
+  ctx.fillText('1\u03C3', padLeft + plotW + 2, yForPct(SIGMA1_HI) + 3);
+  ctx.fillText('1\u03C3', padLeft + plotW + 2, yForPct(SIGMA1_LO) + 3);
+  ctx.fillStyle = 'rgba(234, 179, 8, 0.6)';
+  ctx.fillText('2\u03C3', padLeft + plotW + 2, yForPct(SIGMA2_HI) + 3);
+  ctx.fillText('2\u03C3', padLeft + plotW + 2, yForPct(SIGMA2_LO) + 3);
+  ctx.fillStyle = 'rgba(239, 68, 68, 0.6)';
+  ctx.fillText('3\u03C3', padLeft + plotW + 2, yForPct(SIGMA3_HI) + 3);
+  ctx.fillText('3\u03C3', padLeft + plotW + 2, yForPct(SIGMA3_LO) + 3);
+
+  if (ratioHistory.length < 2) return;
+
+  var step = plotW / WAVE_HISTORY;
+
+  // Ratio line fill (gradient under the curve)
+  ctx.beginPath();
+  for (var i = 0; i < ratioHistory.length; i++) {
+    var x = padLeft + i * step;
+    var yy = yForPct(ratioHistory[i]);
+    if (i === 0) ctx.moveTo(x, yy);
+    else ctx.lineTo(x, yy);
+  }
+  ctx.lineTo(padLeft + (ratioHistory.length - 1) * step, yForPct(0));
+  ctx.lineTo(padLeft, yForPct(0));
+  ctx.closePath();
+  var grad = ctx.createLinearGradient(0, yForPct(100), 0, yForPct(0));
+  grad.addColorStop(0, 'rgba(56,189,248,0.12)');
+  grad.addColorStop(1, 'rgba(56,189,248,0)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Ratio line
+  ctx.beginPath();
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 1.5;
+  for (var i2 = 0; i2 < ratioHistory.length; i2++) {
+    var x2 = padLeft + i2 * step;
+    var y3 = yForPct(ratioHistory[i2]);
+    if (i2 === 0) ctx.moveTo(x2, y3);
+    else ctx.lineTo(x2, y3);
+  }
+  ctx.stroke();
+
+  // Moving average line
+  if (ratioHistory.length >= 2) {
+    ctx.beginPath();
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    var maSum = 0;
+    var maCount = 0;
+    for (var i3 = 0; i3 < ratioHistory.length; i3++) {
+      maSum += ratioHistory[i3];
+      maCount++;
+      if (maCount > MOVING_AVG_WINDOW) {
+        maSum -= ratioHistory[i3 - MOVING_AVG_WINDOW];
+        maCount = MOVING_AVG_WINDOW;
+      }
+      var avg = maSum / maCount;
+      var x3 = padLeft + i3 * step;
+      var y4 = yForPct(avg);
+      if (i3 === 0) ctx.moveTo(x3, y4);
+      else ctx.lineTo(x3, y4);
+    }
+    ctx.stroke();
+  }
+
+  // Current value indicator (dot at right edge)
+  if (ratioHistory.length > 0) {
+    var lastRatio = ratioHistory[ratioHistory.length - 1];
+    var lx = padLeft + (ratioHistory.length - 1) * step;
+    var ly = yForPct(lastRatio);
+
+    ctx.beginPath();
+    ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#38bdf8';
+    ctx.shadowColor = '#38bdf8';
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Value text
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(lastRatio.toFixed(1) + '%', lx + 8, ly + 4);
+  }
+}
+
+// ========== SCAN ==========
+function runScan() {
+  var slots = parseInt(document.getElementById('scanSlots').value) || 21;
+  var cycles = parseInt(document.getElementById('scanCycles').value) || 88;
+  var method = document.getElementById('scanMethod').value;
+
+  var btn = document.getElementById('btnScan');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+
+  var resultsEl = document.getElementById('scanResults');
+  while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
+  var statusDiv = document.createElement('div');
+  statusDiv.className = 'scan-status';
+  statusDiv.textContent = 'Scan laeuft...';
+  resultsEl.appendChild(statusDiv);
+
+  document.getElementById('scanInfo').textContent = '';
+
+  fetch(API + '/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slots: slots, cycles: cycles, method: method }),
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    if (data.error) {
+      while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
+      var errDiv = document.createElement('div');
+      errDiv.className = 'scan-status';
+      errDiv.style.color = 'var(--red)';
+      errDiv.textContent = data.error;
+      resultsEl.appendChild(errDiv);
+      return;
+    }
+    renderScanResults(data);
+  })
+  .catch(function(err) {
+    while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
+    var errDiv2 = document.createElement('div');
+    errDiv2.className = 'scan-status';
+    errDiv2.style.color = 'var(--red)';
+    errDiv2.textContent = 'Fehler: ' + err.message;
+    resultsEl.appendChild(errDiv2);
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Scan starten';
+  });
+}
+
+function renderScanResults(data) {
+  var container = document.getElementById('scanResults');
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  var slotValues = data.slots;
+  var maxVal = 1;
+  for (var s = 0; s < slotValues.length; s++) {
+    if (slotValues[s] > maxVal) maxVal = slotValues[s];
+  }
+
+  // Determine top-3 rank per index
+  var rankMap = {};
+  for (var r = 0; r < Math.min(3, data.ranked.length); r++) {
+    rankMap[data.ranked[r].index] = r;
+  }
+
+  for (var i = 0; i < slotValues.length; i++) {
+    var val = slotValues[i];
+    var pct = (val / maxVal) * 100;
+
+    var rankIdx = rankMap.hasOwnProperty(i) ? rankMap[i] : -1;
+    var rankClass = 'normal';
+    if (rankIdx === 0) rankClass = 'top1';
+    else if (rankIdx === 1) rankClass = 'top2';
+    else if (rankIdx === 2) rankClass = 'top3';
+
+    var valColor = 'var(--text)';
+    if (rankIdx === 0) valColor = 'var(--red)';
+    else if (rankIdx === 1) valColor = '#f97316';
+    else if (rankIdx === 2) valColor = 'var(--yellow)';
+
+    var row = document.createElement('div');
+    row.className = 'slot-bar-row';
+
+    var label = document.createElement('span');
+    label.className = 'slot-bar-label';
+    label.textContent = i + 1;
+
+    var track = document.createElement('div');
+    track.className = 'slot-bar-track';
+
+    var fill = document.createElement('div');
+    fill.className = 'slot-bar-fill ' + rankClass;
+    fill.style.width = pct + '%';
+    track.appendChild(fill);
+
+    var valSpan = document.createElement('span');
+    valSpan.className = 'slot-bar-value';
+    valSpan.style.color = valColor;
+    valSpan.textContent = val;
+
+    row.appendChild(label);
+    row.appendChild(track);
+    row.appendChild(valSpan);
+    container.appendChild(row);
+  }
+
+  // Info section
+  var info = document.getElementById('scanInfo');
+  var top = data.ranked.slice(0, 3);
+  var infoLines = [
+    'Methode: ' + data.method,
+    'Cycles: ' + data.total_cycles,
+    'Signal: ' + data.signal_quality + '%',
+    '',
+  ];
+  info.textContent = '';
+  for (var li = 0; li < infoLines.length; li++) {
+    if (info.textContent) info.textContent += '\n';
+    info.textContent += infoLines[li];
+  }
+
+  // Top 3 as separate styled elements
+  var topHeader = document.createElement('div');
+  topHeader.style.color = 'var(--accent)';
+  topHeader.style.fontWeight = 'bold';
+  topHeader.style.marginTop = '8px';
+  topHeader.textContent = 'Top 3 Treffer:';
+  info.appendChild(topHeader);
+
+  for (var t = 0; t < top.length; t++) {
+    var topLine = document.createElement('div');
+    topLine.textContent = '#' + (t + 1) + ': Slot ' + (top[t].index + 1) + ' = ' + top[t].value;
+    info.appendChild(topLine);
+  }
+}
+
+// ========== RESIZE HANDLER ==========
+var resizeTimer;
+window.addEventListener('resize', function() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(function() {
+    if (ratioHistory.length > 1) drawWave();
+  }, 100);
+});
+
+// Initial gauge
+drawGauge(0);
+
+// ========== TABS ==========
+function switchTab(tab) {
+  document.getElementById('panelFull').style.display = tab === 'full' ? '' : 'none';
+  document.getElementById('panelCat').style.display = tab === 'cat' ? '' : 'none';
+  document.getElementById('panelRaw').style.display = tab === 'raw' ? '' : 'none';
+  document.getElementById('tabFull').className = 'tab-btn' + (tab === 'full' ? ' active' : '');
+  document.getElementById('tabCat').className = 'tab-btn' + (tab === 'cat' ? ' active' : '');
+  document.getElementById('tabRaw').className = 'tab-btn' + (tab === 'raw' ? ' active' : '');
+}
+
+// ========== LOAD THEMES ==========
+(function loadThemes() {
+  fetch('http://localhost:8000/api/morphic/themes')
+  .then(function(r) { return r.json(); })
+  .then(function(themes) {
+    ['fullTheme', 'catTheme'].forEach(function(selId) {
+      var sel = document.getElementById(selId);
+      themes.forEach(function(t) {
+        var opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name + ' (' + t.id + ')';
+        sel.appendChild(opt);
+      });
+    });
+  }).catch(function(){});
+})();
+
+// ========== FULL SCAN (2-stage) ==========
+function runFullScan() {
+  var themeId = document.getElementById('fullTheme').value;
+  var topCat = parseInt(document.getElementById('fullTopCat').value) || 5;
+  var topItems = parseInt(document.getElementById('fullTopItems').value) || 21;
+  var cycles = parseInt(document.getElementById('fullCycles').value) || 88;
+  var method = document.getElementById('fullMethod').value;
+
+  var btn = document.getElementById('btnFullScan');
+  btn.disabled = true;
+  btn.textContent = 'Stufe 1: Kategorien scannen...';
+
+  var resultsEl = document.getElementById('scanResults');
+  clearEl(resultsEl);
+  addStatus(resultsEl, 'Stufe 1: Scanne ' + (themeId ? 'Theme ' + themeId : 'alle') + ' Kategorien...');
+  document.getElementById('scanInfo').textContent = '';
+
+  var params = 'top_categories=' + topCat + '&top_items=' + topItems
+    + '&category_cycles=' + cycles + '&item_cycles=' + cycles + '&method=' + method;
+  if (themeId) params += '&theme_id=' + themeId;
+
+  fetch(API + '/scan/full?' + params, { method: 'POST' })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) {
+      clearEl(resultsEl);
+      addStatus(resultsEl, data.error, 'var(--red)');
+      return;
+    }
+    renderFullScanResults(data);
+  })
+  .catch(function(err) {
+    clearEl(resultsEl);
+    addStatus(resultsEl, 'Fehler: ' + err.message, 'var(--red)');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Morphische Felder scannen';
+  });
+}
+
+function renderFullScanResults(data) {
+  var container = document.getElementById('scanResults');
+  clearEl(container);
+
+  // Stage 1 header
+  var h1 = document.createElement('div');
+  h1.className = 'stage-header';
+  h1.textContent = 'Stufe 1: Top ' + data.stage1_categories.length + ' Kategorien (von ' + data.total_categories_scanned + ')';
+  container.appendChild(h1);
+
+  data.stage1_categories.forEach(function(cat, i) {
+    var row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = '<span class="item-rank r' + (i+1) + '">#' + (i+1) + '</span>'
+      + '<div><div class="item-text">' + escHtml(cat.category_name) + '</div>'
+      + '<div class="item-cat">' + escHtml(cat.theme_name || '') + ' — ' + cat.item_count + ' Items</div></div>'
+      + '<span class="item-score">' + cat.score + '</span>';
+    container.appendChild(row);
+  });
+
+  // Stage 2 header
+  var h2 = document.createElement('div');
+  h2.className = 'stage-header';
+  h2.style.marginTop = '4px';
+  h2.textContent = 'Stufe 2: Top ' + data.stage2_items.length + ' Items (von ' + data.total_items_scanned + ')';
+  container.appendChild(h2);
+
+  data.stage2_items.forEach(function(item, i) {
+    var row = document.createElement('div');
+    row.className = 'item-row';
+    var rankClass = i < 3 ? ' r' + (i+1) : '';
+    row.innerHTML = '<span class="item-rank' + rankClass + '">#' + (i+1) + '</span>'
+      + '<div><div class="item-text">' + escHtml(item.text_primary || '-') + '</div>'
+      + '<div class="item-cat">' + escHtml(item.category_name) + '</div></div>'
+      + '<span class="item-score">' + item.score + '</span>';
+    container.appendChild(row);
+  });
+
+  // Info
+  var info = document.getElementById('scanInfo');
+  info.textContent = 'Methode: ' + data.method + ' | Signal: ' + data.signal_quality + '%\n'
+    + data.total_categories_scanned + ' Kategorien → ' + data.total_items_scanned + ' Items gescannt';
+}
+
+// ========== CATEGORY SCAN ==========
+function runCatScan() {
+  var themeId = document.getElementById('catTheme').value;
+  var topN = parseInt(document.getElementById('catTopN').value) || 10;
+  var cycles = parseInt(document.getElementById('catCycles').value) || 88;
+
+  var btn = document.getElementById('btnCatScan');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+
+  var resultsEl = document.getElementById('scanResults');
+  clearEl(resultsEl);
+  addStatus(resultsEl, 'Scanne Kategorien...');
+
+  var params = 'top_n=' + topN + '&cycles=' + cycles;
+  if (themeId) params += '&theme_id=' + themeId;
+
+  fetch(API + '/scan/categories?' + params, { method: 'POST' })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) {
+      clearEl(resultsEl);
+      addStatus(resultsEl, data.error, 'var(--red)');
+      return;
+    }
+    clearEl(resultsEl);
+    var h = document.createElement('div');
+    h.className = 'stage-header';
+    h.textContent = 'Top ' + data.results.length + ' Kategorien (von ' + data.total_categories + ')';
+    resultsEl.appendChild(h);
+    data.results.forEach(function(cat, i) {
+      var row = document.createElement('div');
+      row.className = 'item-row';
+      var rankClass = i < 3 ? ' r' + (i+1) : '';
+      row.innerHTML = '<span class="item-rank' + rankClass + '">#' + (i+1) + '</span>'
+        + '<div><div class="item-text">' + escHtml(cat.category_name) + '</div>'
+        + '<div class="item-cat">' + escHtml(cat.theme_name || '') + ' — ' + cat.item_count + ' Items</div></div>'
+        + '<span class="item-score">' + cat.score + '</span>';
+      resultsEl.appendChild(row);
+    });
+    document.getElementById('scanInfo').textContent = 'Signal: ' + data.signal_quality + '% | Methode: ' + data.method;
+  })
+  .catch(function(err) {
+    clearEl(resultsEl);
+    addStatus(resultsEl, 'Fehler: ' + err.message, 'var(--red)');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Kategorien scannen';
+  });
+}
+
+// ========== HELPERS ==========
+function clearEl(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+function addStatus(el, msg, color) {
+  var d = document.createElement('div');
+  d.className = 'scan-status';
+  if (color) d.style.color = color;
+  d.textContent = msg;
+  el.appendChild(d);
+}
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

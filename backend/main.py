@@ -46,6 +46,13 @@ def health_check():
     return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
 
 
+@app.get("/dashboard")
+def serve_dashboard():
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    return FileResponse(Path(__file__).parent / "diode_dashboard.html", media_type="text/html")
+
+
 if __name__ == "__main__":
     import uvicorn
 

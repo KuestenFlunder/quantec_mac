@@ -77,7 +77,7 @@ class BitBangDevice:
             try:
                 self._ftdi = Ftdi()
                 self._ftdi.open_from_url(self._url)
-                self._ftdi.reset(usb_dev=False)
+                self._ftdi.reset(usb_reset=False)
                 self._ftdi.set_baudrate(BAUD_RATE)
                 return True
             except Exception:
